@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Cdx Userscripts Manager",
+  "version": "1.0.0",
+  "description": "Simple userscripts manager",
+  "permissions": [
+    "tabs",
+    "tabGroups"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "https://instagram.com/*"
+      ],
+      "js": [
+        "src/instagram-wall.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
