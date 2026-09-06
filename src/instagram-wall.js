@@ -86,11 +86,19 @@ function injectStyles() {
       #ig-wall-toolbar button.active { background: #4a9eff; }
 
       .ig-wall-item {
-        width: 300px; max-width: ${vw}vw;
+        /* width: 300px; max-width: ${vw}vw; */
         border: 1px solid #303030; border-radius: 8px; overflow: hidden;
         background: #111;
       }
+
+      .ig-wall-link {
+        display: flex;
+        flex-wrap: wrap;
+      }
+
       .ig-wall-item img {
+        margin: 4px;
+        max-width: 300px;
         display: block; width: 100%; max-height: ${vh}vh; object-fit: contain; background: #000;
       }
       .ig-wall-item video {
@@ -318,13 +326,14 @@ function createWallCard(item) {
   });
   card.setAttribute('data-shortcode', item.shortcode);
   card.__igWallItem = item;
-  const link = el('a', {
+  const linkEl = el('a', {
     href: item.href,
     target: '_blank',
     rel: 'noopener noreferrer',
   });
+  linkEl.classList.add('ig-wall-link');
   for (const media of item.media || []) {
-    link.appendChild(
+    linkEl.appendChild(
       media.type === 'video'
         ? el('video', {
             src: media.src,
@@ -339,7 +348,7 @@ function createWallCard(item) {
           }),
     );
   }
-  card.appendChild(link);
+  card.appendChild(linkEl);
 
   const meta = el('div', { className: 'ig-wall-meta' });
   if (item.isReel) {
