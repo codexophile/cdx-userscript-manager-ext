@@ -19,6 +19,8 @@ const state = {
   carouselJobs: new Map(),
 };
 
+const QUERY_CAROUSEL_IMGS = 'li img[style="object-fit: cover;"]';
+
 // --- small DOM builder ---
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
