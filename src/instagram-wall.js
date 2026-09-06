@@ -203,6 +203,10 @@ function waitForCarouselImages(previousSources = []) {
         resolve(sources);
         return;
       }
+      if (!findCarouselNextButton()) {
+        resolve(sources);
+        return;
+      }
       if (Date.now() - startedAt >= 3000) {
         resolve(sources);
         return;
@@ -214,15 +218,7 @@ function waitForCarouselImages(previousSources = []) {
 }
 
 function findCarouselNextButton() {
-  return Array.from(document.querySelectorAll('button, [role="button"]'))
-    .filter(button => {
-      const label = `${button.getAttribute('aria-label') || ''} ${button.textContent || ''}`;
-      return (
-        /next|right|forward/i.test(label) &&
-        button.getBoundingClientRect().width > 0
-      );
-    })
-    .pop();
+  return document.querySelector('button[aria-label="Next"]');
 }
 
 async function harvestCarouselInPostTab(jobId) {
