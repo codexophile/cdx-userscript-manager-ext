@@ -167,14 +167,42 @@ function mediaFromNode(node) {
 function findCarouselMedia() {
   const media = [];
   const seen = new Set();
-  const root = document.querySelector('main') || document.body;
-  for (const node of root.querySelectorAll('img, video')) {
+  for (const node of document.querySelectorAll(QUERY_CAROUSEL_IMGS)) {
     const item = mediaFromNode(node);
     if (!item.src || seen.has(item.src)) continue;
     seen.add(item.src);
     media.push(item);
   }
   return media;
+}
+
+function carouselImageSources() {
+  return Array.from(document.querySelectorAll(QUERY_CAROUSEL_IMGS))
+    .map(image => bestSrcFromImg(image))
+    .filter(Boolean);
+}
+
+function waitForCarouselImages(previousSources = []) {
+  return new Promise(resolve => {
+    const startedAt = Date.now();
+    const poll = () => {
+      const sources = carouselImageSources();
+      if (
+        sources.length &&
+        (previousSources.length === 0 ||
+          sources.some(src => !previousSources.includes(src)))
+      ) {
+        resolve(sources);
+        return;
+      }
+      if (Date.now() - startedAt >= 3000) {
+        resolve(sources);
+        return;
+      }
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
 }
 
 function findCarouselNextButton() {
@@ -193,21 +221,24 @@ async function harvestCarouselInPostTab(jobId) {
   const shortcode = getShortcodeFromHref(location.href);
   const media = [];
   const seen = new Set();
-  let unchangedRounds = 0;
+  let previousSources = await waitForCarouselImages();
 
-  for (let round = 0; round < 20 && unchangedRounds < 2; round++) {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const before = media.length;
-    for (const item of findCarouselMedia()) {
-      if (seen.has(item.src)) continue;
-      seen.add(item.src);
-      media.push(item);
+  for (let slide = 0; slide < 20; slide++) {
+    for (const image of document.querySelectorAll(QUERY_CAROUSEL_IMGS)) {
+      const currentSrc = bestSrcFromImg(image);
+      if (currentSrc && !seen.has(currentSrc)) {
+        seen.add(currentSrc);
+        media.push(mediaFromNode(image));
+      }
     }
-    unchangedRounds = media.length === before ? unchangedRounds + 1 : 0;
+
     const next = findCarouselNextButton();
     if (!next || next.disabled || next.getAttribute('aria-disabled') === 'true')
       break;
     next.click();
+    const nextSources = await waitForCarouselImages(previousSources);
+    if (!nextSources.some(src => !previousSources.includes(src))) break;
+    previousSources = nextSources;
   }
 
   chrome.runtime.sendMessage({
@@ -336,7 +367,10 @@ function requestCarouselExpansion(item) {
   chrome.runtime.sendMessage(
     {
       type: 'ig-wall-open-carousel',
-      url: item.href,
+      url: new URL(
+        `/${item.isReel ? 'reel' : 'p'}/${item.shortcode}/`,
+        location.origin,
+      ).href,
     },
     response => {
       if (chrome.runtime.lastError || !response?.jobId) {

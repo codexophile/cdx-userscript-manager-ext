@@ -7,9 +7,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   carouselJobs.set(jobId, {
     parentTabId: sender.tab?.id,
     childTabId: null,
+    started: false,
   });
 
-  chrome.tabs.create({ url: message.url, active: false }, tab => {
+  chrome.tabs.create({ url: message.url, active: true }, tab => {
     const job = carouselJobs.get(jobId);
     if (job && tab?.id) job.childTabId = tab.id;
   });
@@ -21,6 +22,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === 'ig-wall-carousel-ready') {
     for (const [jobId, job] of carouselJobs) {
       if (job.childTabId !== sender.tab?.id) continue;
+      if (job.started) break;
+      job.started = true;
       chrome.tabs.sendMessage(sender.tab.id, {
         type: 'ig-wall-start-carousel-harvest',
         jobId,
@@ -41,19 +44,10 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     });
   }
   chrome.tabs.remove(job.childTabId);
-  carouselJobs.delete(message.jobId);
-});
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status !== 'complete') return;
-  for (const [jobId, job] of carouselJobs) {
-    if (job.childTabId !== tabId) continue;
-    chrome.tabs.sendMessage(tabId, {
-      type: 'ig-wall-start-carousel-harvest',
-      jobId,
-    });
-    break;
+  if (job.parentTabId != null) {
+    chrome.tabs.update(job.parentTabId, { active: true });
   }
+  carouselJobs.delete(message.jobId);
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {
