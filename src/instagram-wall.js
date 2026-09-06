@@ -16,6 +16,7 @@ const state = {
   idleRounds: 0,
   isAutoMode: false,
   harvestDebounceTimer: null,
+  carouselJobs: new Map(),
 };
 
 // --- small DOM builder ---
@@ -90,6 +91,9 @@ function injectStyles() {
       .ig-wall-item img {
         display: block; width: 100%; max-height: ${vh}vh; object-fit: contain; background: #000;
       }
+      .ig-wall-item video {
+        display: block; width: 100%; max-height: ${vh}vh; object-fit: contain; background: #000;
+      }
       .ig-wall-item .ig-wall-meta {
         display: flex; justify-content: space-between; align-items: center;
         padding: 6px 10px; font-family: sans-serif; font-size: 11px; color: #999;
@@ -141,6 +145,77 @@ function isCarouselLink(link) {
   return false;
 }
 
+function mediaFromNode(node) {
+  if (node.tagName === 'VIDEO') {
+    return {
+      type: 'video',
+      src: node.currentSrc || node.src || '',
+      poster: node.poster || '',
+      alt: '',
+    };
+  }
+  return {
+    type: 'image',
+    src: bestSrcFromImg(node),
+    poster: '',
+    alt: node.getAttribute('alt') || '',
+  };
+}
+
+function findCarouselMedia() {
+  const media = [];
+  const seen = new Set();
+  const root = document.querySelector('main') || document.body;
+  for (const node of root.querySelectorAll('img, video')) {
+    const item = mediaFromNode(node);
+    if (!item.src || seen.has(item.src)) continue;
+    seen.add(item.src);
+    media.push(item);
+  }
+  return media;
+}
+
+function findCarouselNextButton() {
+  return Array.from(document.querySelectorAll('button, [role="button"]'))
+    .filter(button => {
+      const label = `${button.getAttribute('aria-label') || ''} ${button.textContent || ''}`;
+      return (
+        /next|right|forward/i.test(label) &&
+        button.getBoundingClientRect().width > 0
+      );
+    })
+    .pop();
+}
+
+async function harvestCarouselInPostTab(jobId) {
+  const shortcode = getShortcodeFromHref(location.href);
+  const media = [];
+  const seen = new Set();
+  let unchangedRounds = 0;
+
+  for (let round = 0; round < 20 && unchangedRounds < 2; round++) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const before = media.length;
+    for (const item of findCarouselMedia()) {
+      if (seen.has(item.src)) continue;
+      seen.add(item.src);
+      media.push(item);
+    }
+    unchangedRounds = media.length === before ? unchangedRounds + 1 : 0;
+    const next = findCarouselNextButton();
+    if (!next || next.disabled || next.getAttribute('aria-disabled') === 'true')
+      break;
+    next.click();
+  }
+
+  chrome.runtime.sendMessage({
+    type: 'ig-wall-carousel-result',
+    jobId,
+    shortcode,
+    media,
+  });
+}
+
 function bestSrcFromImg(img) {
   const srcset = img.getAttribute('srcset');
   if (!srcset) return img.currentSrc || img.src || '';
@@ -176,6 +251,14 @@ function harvestFromDocument() {
       alt: img.getAttribute('alt') || '',
       isReel: isReelHref(link.href),
       isCarousel: isCarouselLink(link),
+      media: [
+        {
+          type: 'image',
+          src: bestSrcFromImg(img),
+          poster: '',
+          alt: img.getAttribute('alt') || '',
+        },
+      ],
     });
     added++;
   }
@@ -191,14 +274,38 @@ function scheduleHarvest() {
 }
 
 function addWallItem(item) {
-  const card = el('div', { className: 'ig-wall-item' });
+  const card = createWallCard(item);
+  state.contentEl.insertBefore(card, document.getElementById('ig-wall-status'));
+  if (item.isCarousel) requestCarouselExpansion(item);
+}
+
+function createWallCard(item) {
+  const card = el('div', {
+    className: 'ig-wall-item',
+  });
+  card.setAttribute('data-shortcode', item.shortcode);
+  card.__igWallItem = item;
   const link = el('a', {
     href: item.href,
     target: '_blank',
     rel: 'noopener noreferrer',
   });
-  const img = el('img', { src: item.imgSrc, alt: item.alt, loading: 'lazy' });
-  link.appendChild(img);
+  for (const media of item.media || []) {
+    link.appendChild(
+      media.type === 'video'
+        ? el('video', {
+            src: media.src,
+            poster: media.poster,
+            controls: true,
+            preload: 'metadata',
+          })
+        : el('img', {
+            src: media.src,
+            alt: media.alt || item.alt,
+            loading: 'lazy',
+          }),
+    );
+  }
   card.appendChild(link);
 
   const meta = el('div', { className: 'ig-wall-meta' });
@@ -206,20 +313,56 @@ function addWallItem(item) {
     meta.appendChild(el('span', { className: 'ig-wall-badge' }, 'Reel'));
   }
   if (item.isCarousel) {
-    meta.appendChild(el('span', { className: 'ig-wall-badge' }, 'Carousel'));
+    meta.appendChild(
+      el('span', { className: 'ig-wall-badge' }, `${item.media.length} items`),
+    );
   }
   meta.appendChild(
     el(
       'a',
       { href: item.href, target: '_blank', rel: 'noopener noreferrer' },
-      item.isCarousel ? 'View all slides ?' : 'Open original',
+      item.isCarousel ? 'View all slides' : 'Open original',
     ),
   );
   card.appendChild(meta);
-
-  const status = document.getElementById('ig-wall-status');
-  state.contentEl.insertBefore(card, status);
+  return card;
 }
+
+function requestCarouselExpansion(item) {
+  if (!item.isCarousel || state.carouselJobs.has(item.shortcode)) return;
+  state.carouselJobs.set(item.shortcode, true);
+  chrome.runtime.sendMessage(
+    {
+      type: 'ig-wall-open-carousel',
+      url: item.href,
+    },
+    response => {
+      if (chrome.runtime.lastError || !response?.jobId) {
+        state.carouselJobs.delete(item.shortcode);
+      }
+    },
+  );
+}
+
+function onCarouselResult(message) {
+  if (message.shortcode) state.carouselJobs.delete(message.shortcode);
+  if (!state.contentEl || !message.shortcode || !message.media?.length) return;
+  const card = Array.from(state.contentEl.children).find(
+    node => node.dataset.shortcode === message.shortcode,
+  );
+  if (!card?.__igWallItem) return;
+  const item = card.__igWallItem;
+  item.media = message.media;
+  card.replaceWith(createWallCard(item));
+}
+
+chrome.runtime.onMessage.addListener(message => {
+  if (message?.type === 'ig-wall-start-carousel-harvest') {
+    harvestCarouselInPostTab(message.jobId);
+  } else if (message?.type === 'ig-wall-carousel-result') {
+    onCarouselResult(message);
+  }
+});
 
 function setStatus(text) {
   const status = document.getElementById('ig-wall-status');
@@ -370,6 +513,9 @@ function insertTriggerButton() {
 function initialize() {
   injectStyles();
   insertTriggerButton();
+  if (/\/(p|reel)\/[^/]+/.test(location.pathname)) {
+    chrome.runtime.sendMessage({ type: 'ig-wall-carousel-ready' });
+  }
   // Instagram is a client-rendered SPA that swaps out the DOM on
   // navigation, so keep checking that the trigger button still exists.
   setInterval(insertTriggerButton, 2000);
