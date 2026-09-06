@@ -57,7 +57,7 @@ function injectStyles() {
 
       #ig-wall-overlay {
         position: fixed; inset: 0; width: 100vw; height: 100vh;
-        background: rgba(10,10,15,0.98); z-index: 999999;
+        background: rgba(10,10,15,0.98); z-index: 9000;
         overflow-y: auto; -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
       }
       #ig-wall-content {
