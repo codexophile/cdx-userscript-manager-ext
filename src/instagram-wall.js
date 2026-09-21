@@ -2,7 +2,6 @@ const config = {
   VIEWPORT_HEIGHT_PERCENTAGE: 0.85,
   VIEWPORT_WIDTH_PERCENTAGE: 0.6,
   AUTO_SCROLL_DELAY_MS: 900,
-  AUTO_SCROLL_MAX_IDLE_ROUNDS: 6, // stop auto-load after this many scrolls with 0 new posts
   HARVEST_DEBOUNCE_MS: 250,
 };
 
@@ -445,13 +444,9 @@ function startAutoScroll() {
     setTimeout(() => {
       const added = harvestFromDocument();
       if (added === 0) {
-        state.idleRounds++;
-        if (state.idleRounds >= config.AUTO_SCROLL_MAX_IDLE_ROUNDS) {
-          stopAutoScroll();
-          setStatus(
-            `Stopped � no new posts after several scrolls (${state.seenShortcodes.size} loaded). Instagram may have reached the end, or just needs a manual nudge with "Load more".`,
-          );
-        }
+        setStatus(
+          `Still auto-loading (${state.seenShortcodes.size} posts loaded); waiting for more posts�`,
+        );
       } else {
         state.idleRounds = 0;
         setStatus(`Loaded ${state.seenShortcodes.size} posts so far�`);
