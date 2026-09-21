@@ -18,7 +18,8 @@ const state = {
   carouselJobs: new Map(),
 };
 
-const QUERY_CAROUSEL_IMGS = 'li img[style="object-fit: cover;"]';
+const QUERY_CAROUSEL_IMGS =
+  'li img[style*="object-fit: cover"], [role="dialog"] img';
 
 // --- small DOM builder ---
 function el(tag, props = {}, children = []) {
@@ -135,11 +136,18 @@ function getShortcodeFromHref(href) {
 }
 
 function isReelHref(href) {
+  return getPostTypeFromHref(href) === 'Reel';
+}
+
+function getPostTypeFromHref(href) {
   try {
-    return new URL(href, location.origin).pathname.startsWith('/reel/');
+    const path = new URL(href, location.origin).pathname;
+    if (path.startsWith('/reel/')) return 'Reel';
+    if (path.startsWith('/p/')) return 'Post';
   } catch {
-    return false;
+    // Ignore malformed links and let the caller use its fallback type.
   }
+  return 'Unknown';
 }
 
 // Grid items for multi-media posts carry a small "stacked squares" icon
@@ -191,37 +199,126 @@ function carouselImageSources() {
 
 function waitForCarouselImages(previousSources = []) {
   return new Promise(resolve => {
-    const startedAt = Date.now();
-    const poll = () => {
-      const sources = carouselImageSources();
-      if (
-        sources.length &&
-        (previousSources.length === 0 ||
-          sources.some(src => !previousSources.includes(src)))
-      ) {
-        resolve(sources);
-        return;
-      }
-      if (!findCarouselNextButton()) {
-        resolve(sources);
-        return;
-      }
-      if (Date.now() - startedAt >= 3000) {
-        resolve(sources);
-        return;
-      }
-      setTimeout(poll, 100);
+    const finish = () => {
+      clearTimeout(timeout);
+      observer.disconnect();
+      document.removeEventListener('load', check, true);
+      resolve(carouselImageSources());
     };
-    poll();
+    const timeout = setTimeout(finish, 1500);
+    const check = () => {
+      const sources = carouselImageSources();
+      const hasNewSource = sources.some(src => !previousSources.includes(src));
+      const next = findCarouselNextButton();
+      if ((sources.length && hasNewSource) || !next || next.disabled) finish();
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        'src',
+        'srcset',
+        'aria-label',
+        'aria-disabled',
+        'disabled',
+      ],
+    });
+    document.addEventListener('load', check, true);
+    check();
   });
 }
 
 function findCarouselNextButton() {
-  return document.querySelector('button[aria-label="Next"]');
+  const root = document.querySelector('[role="dialog"]') || document;
+  return Array.from(
+    root.querySelectorAll('button, [role="button"], [aria-label], [title]'),
+  ).find(node => {
+    const label = `${node.getAttribute('aria-label') || ''} ${
+      node.getAttribute('title') || ''
+    }`.trim();
+    const style = window.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return (
+      /\bnext(?:\s+(?:slide|photo|item))?\b/i.test(label) &&
+      !node.disabled &&
+      node.getAttribute('aria-disabled') !== 'true' &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  });
+}
+
+function clickCarouselNextButton(button) {
+  button.focus({ preventScroll: true });
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+    button.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, view: window }),
+    );
+  }
+  button.click();
+}
+
+function findCarouselExpectedCount() {
+  const root = document.querySelector('[role="dialog"]') || document.body;
+  const labels = root.querySelectorAll(
+    'button[aria-label], [role="button"][aria-label], [aria-label], [title]',
+  );
+  const texts = [root.innerText || ''];
+  let slideButtonCount = 0;
+
+  for (const node of labels) {
+    const text = `${node.getAttribute('aria-label') || ''} ${
+      node.getAttribute('title') || ''
+    }`;
+    texts.push(text);
+    if (/\b(?:go to|view) slide\s+\d+/i.test(text)) slideButtonCount++;
+  }
+
+  let expectedCount = slideButtonCount;
+  for (const text of texts) {
+    for (const match of text.matchAll(
+      /(?:\b\d+\s*\/\s*(\d+)\b|\b\d+\s+of\s+(\d+)\b|\btotal\s*[:.]?\s*(\d+)\b)/gi,
+    )) {
+      expectedCount = Math.max(
+        expectedCount,
+        Number(match[1] || match[2] || match[3]),
+      );
+    }
+  }
+  return expectedCount;
+}
+
+function waitForCarouselPageReady() {
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timeout);
+      observer.disconnect();
+      document.removeEventListener('load', check, true);
+      resolve();
+    };
+    const timeout = setTimeout(finish, 5000);
+    const check = () => {
+      const images = document.querySelectorAll(QUERY_CAROUSEL_IMGS);
+      const hasLoadedImage = Array.from(images).some(image => image.complete);
+      const hasPageCount = findCarouselExpectedCount() > 1;
+      const hasNextSlide = Boolean(findCarouselNextButton());
+      if (hasLoadedImage && (hasPageCount || hasNextSlide)) finish();
+    };
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('load', check, true);
+    check();
+  });
 }
 
 async function harvestCarouselInPostTab(jobId) {
   const shortcode = getShortcodeFromHref(location.href);
+  await waitForCarouselPageReady();
+  const expectedCountFromPage = findCarouselExpectedCount();
   const media = [];
   const seen = new Set();
   let previousSources = await waitForCarouselImages();
@@ -238,16 +335,19 @@ async function harvestCarouselInPostTab(jobId) {
     const next = findCarouselNextButton();
     if (!next || next.disabled || next.getAttribute('aria-disabled') === 'true')
       break;
-    next.click();
-    const nextSources = await waitForCarouselImages(previousSources);
-    if (!nextSources.some(src => !previousSources.includes(src))) break;
-    previousSources = nextSources;
+    clickCarouselNextButton(next);
+    previousSources = await waitForCarouselImages(previousSources);
   }
+
+  const expectedCount = Math.max(expectedCountFromPage, media.length);
 
   chrome.runtime.sendMessage({
     type: 'ig-wall-carousel-result',
     jobId,
     shortcode,
+    expectedCount,
+    successfulCount: media.length,
+    failedCount: Math.max(0, expectedCount - media.length),
     media,
   });
 }
@@ -283,6 +383,7 @@ function harvestFromDocument() {
     addWallItem({
       shortcode,
       href: new URL(link.href, location.origin).href,
+      postType: getPostTypeFromHref(link.href),
       imgSrc: bestSrcFromImg(img),
       alt: img.getAttribute('alt') || '',
       isReel: isReelHref(link.href),
@@ -313,6 +414,17 @@ function addWallItem(item) {
   const card = createWallCard(item);
   state.contentEl.insertBefore(card, document.getElementById('ig-wall-status'));
   if (item.isCarousel) requestCarouselExpansion(item);
+}
+
+function getMediaTypeLabels(item) {
+  const labels = [];
+  const media = item.media || [];
+
+  labels.push(item.postType || (item.isReel ? 'Reel' : 'Post'));
+  if (item.isCarousel) labels.push('Carousel');
+  if (media.some(entry => entry.type === 'video')) labels.push('Video');
+
+  return labels;
 }
 
 function createWallCard(item) {
@@ -346,13 +458,22 @@ function createWallCard(item) {
   card.appendChild(linkEl);
 
   const meta = el('div', { className: 'ig-wall-meta' });
-  if (item.isReel) {
-    meta.appendChild(el('span', { className: 'ig-wall-badge' }, 'Reel'));
+  for (const label of getMediaTypeLabels(item)) {
+    meta.appendChild(el('span', { className: 'ig-wall-badge' }, label));
   }
   if (item.isCarousel) {
     meta.appendChild(
       el('span', { className: 'ig-wall-badge' }, `${item.media.length} items`),
     );
+    if (item.expectedCount) {
+      meta.appendChild(
+        el(
+          'span',
+          { className: 'ig-wall-badge' },
+          `Total ${item.expectedCount} | Success ${item.successfulCount} | Failed ${item.failedCount}`,
+        ),
+      );
+    }
   }
   meta.appendChild(
     el(
@@ -361,12 +482,27 @@ function createWallCard(item) {
       item.isCarousel ? 'View all slides' : 'Open original',
     ),
   );
+  if (item.isCarousel && item.failedCount > 0) {
+    const retryButton = el('button', {}, 'Retry failed items');
+    retryButton.type = 'button';
+    retryButton.onclick = event => {
+      event.preventDefault();
+      requestCarouselExpansion(item, true);
+    };
+    meta.appendChild(retryButton);
+  }
   card.appendChild(meta);
   return card;
 }
 
-function requestCarouselExpansion(item) {
+function requestCarouselExpansion(item, isRetry = false) {
   if (!item.isCarousel || state.carouselJobs.has(item.shortcode)) return;
+  if (isRetry) {
+    item.media = item.media.slice(0, 1);
+    item.expectedCount = 0;
+    item.successfulCount = 0;
+    item.failedCount = 0;
+  }
   state.carouselJobs.set(item.shortcode, true);
   chrome.runtime.sendMessage(
     {
@@ -393,7 +529,35 @@ function onCarouselResult(message) {
   if (!card?.__igWallItem) return;
   const item = card.__igWallItem;
   item.media = message.media;
+  item.expectedCount = message.expectedCount || message.media.length;
+  item.successfulCount = message.successfulCount ?? message.media.length;
+  item.failedCount =
+    message.failedCount ??
+    Math.max(0, item.expectedCount - item.successfulCount);
   card.replaceWith(createWallCard(item));
+  updateCarouselStatus();
+}
+
+function updateCarouselStatus() {
+  const carouselItems = Array.from(state.contentEl?.children || []).filter(
+    node => node.__igWallItem?.isCarousel,
+  );
+  if (!carouselItems.length) return;
+  const total = carouselItems.reduce(
+    (sum, node) => sum + (node.__igWallItem.expectedCount || 0),
+    0,
+  );
+  const successful = carouselItems.reduce(
+    (sum, node) => sum + (node.__igWallItem.successfulCount || 0),
+    0,
+  );
+  const failed = carouselItems.reduce(
+    (sum, node) => sum + (node.__igWallItem.failedCount || 0),
+    0,
+  );
+  setStatus(
+    `Carousel media - Total: ${total} | Successful: ${successful} | Failed: ${failed}`,
+  );
 }
 
 chrome.runtime.onMessage.addListener(message => {

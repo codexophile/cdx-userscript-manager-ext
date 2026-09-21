@@ -56,6 +56,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     chrome.tabs.sendMessage(job.parentTabId, {
       type: 'ig-wall-carousel-result',
       shortcode: message.shortcode,
+      expectedCount: message.expectedCount,
+      successfulCount: message.successfulCount,
+      failedCount: message.failedCount,
       media: message.media,
     });
   }
