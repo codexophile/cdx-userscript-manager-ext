@@ -17,6 +17,7 @@
         "https://instagram.com/*"
       ],
       "js": [
+        "src/lib.js",
         "src/instagram-wall.js"
       ],
       "run_at": "document_idle"
