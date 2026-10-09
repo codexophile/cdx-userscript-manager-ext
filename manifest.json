@@ -5,7 +5,8 @@
   "description": "Simple userscripts manager",
   "permissions": [
     "tabs",
-    "tabGroups"
+    "tabGroups",
+    "history"
   ],
   "background": {
     "service_worker": "background.js"
