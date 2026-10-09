@@ -17,7 +17,24 @@
       );
       console.log(popoverEl, toolbarEl);
       removeHistoryBtnEl.addEventListener('click', () => {
-        chrome.history.deleteUrl({ url: linkHref });
+        chrome.runtime.sendMessage(
+          { type: 'delete-history-url', url: linkHref },
+          response => {
+            if (chrome.runtime.lastError) {
+              console.error(
+                'Failed to delete the history entry:',
+                chrome.runtime.lastError.message,
+              );
+              return;
+            }
+            if (!response?.success) {
+              console.error(
+                'Failed to delete the history entry:',
+                response?.error ?? 'Unknown error',
+              );
+            }
+          },
+        );
       });
     }
   });

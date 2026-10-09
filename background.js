@@ -22,6 +22,25 @@ function startNextCarouselJob() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'delete-history-url') {
+    if (typeof message.url !== 'string' || message.url.length === 0) {
+      sendResponse({ success: false, error: 'A valid URL is required.' });
+      return;
+    }
+
+    chrome.history.deleteUrl({ url: message.url }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({
+          success: false,
+          error: chrome.runtime.lastError.message,
+        });
+        return;
+      }
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
   if (message?.type !== 'ig-wall-open-carousel') return;
 
   const jobId = crypto.randomUUID();
