@@ -22,6 +22,44 @@ function startNextCarouselJob() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'open-url-in-window') {
+    if (typeof message.url !== 'string' || message.url.length === 0) {
+      sendResponse({ success: false, error: 'A valid URL is required.' });
+      return;
+    }
+
+    chrome.windows.create({ url: message.url, type: 'normal' }, window => {
+      if (chrome.runtime.lastError || !window?.id) {
+        sendResponse({
+          success: false,
+          error: chrome.runtime.lastError?.message ?? 'Failed to create window.',
+        });
+        return;
+      }
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (message?.type === 'add-history-url') {
+    if (typeof message.url !== 'string' || message.url.length === 0) {
+      sendResponse({ success: false, error: 'A valid URL is required.' });
+      return;
+    }
+
+    chrome.history.addUrl({ url: message.url }, () => {
+      if (chrome.runtime.lastError) {
+        sendResponse({
+          success: false,
+          error: chrome.runtime.lastError.message,
+        });
+        return;
+      }
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
   if (message?.type === 'delete-history-url') {
     if (typeof message.url !== 'string' || message.url.length === 0) {
       sendResponse({ success: false, error: 'A valid URL is required.' });
